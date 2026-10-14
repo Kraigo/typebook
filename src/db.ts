@@ -1,6 +1,16 @@
 // Minimal IndexedDB wrapper. Book text and metadata are stored separately
 // so the library list doesn't load whole books.
 
+/** Cumulative typing statistics for a book (error positions are not kept). */
+export interface BookStats {
+  activeMs: number; // typing time, pauses excluded
+  keystrokes: number;
+  errors: number;
+  correct: number; // correctly typed characters
+}
+
+export const emptyStats = (): BookStats => ({ activeMs: 0, keystrokes: 0, errors: 0, correct: 0 });
+
 export interface BookMeta {
   id: string;
   title: string;
@@ -8,6 +18,7 @@ export interface BookMeta {
   pos: number; // progress as index into the normalized source text
   addedAt: number;
   openedAt: number;
+  stats?: BookStats;
 }
 
 const DB_NAME = "typebook";

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun ./index.html",
+    "dev": "bun --watch dev.ts",
     "typecheck": "tsc -p .",
     "build": "rm -rf dist && bun build ./index.html --outdir dist --minify"
   },

@@ -7,10 +7,13 @@ interface Settings extends TextOptions {
   fontSize: number;
   lines: number;
   stopOnError: boolean;
+  ignoreCase: boolean;
+  spaceForNewline: boolean;
 }
 const DEFAULTS: Settings = {
   removePunct: false,
-  lowercase: false,
+  ignoreCase: false,
+  spaceForNewline: true,
   simplifyQuotes: true,
   stopOnError: false,
   fontSize: 24,
@@ -38,6 +41,7 @@ const els = {
   title: $("book-title"),
   list: $<HTMLUListElement>("book-list"),
   empty: $("book-empty"),
+  total: $("lib-total"),
   drop: $<HTMLLabelElement>("drop"),
   fileInput: $<HTMLInputElement>("file-input"),
   pasteTitle: $<HTMLInputElement>("paste-title"),
@@ -50,6 +54,8 @@ const els = {
   restore: $("btn-restore"),
   bar: $("progress-bar"),
   time: $("st-time"),
+  nowWpm: $("st-now-wpm"),
+  nowCpm: $("st-now-cpm"),
   wpm: $("st-wpm"),
   cpm: $("st-cpm"),
   acc: $("st-acc"),
@@ -69,8 +75,22 @@ function setStatus(msg: string, error = false) {
   els.status.classList.toggle("error", error);
 }
 
+function statsLine(st: db.BookStats | undefined): string {
+  if (!st || st.activeMs < 1000) return "";
+  const cpm = cpmOf(st);
+  return ` · ${fmtTime(st.activeMs)} · ${Math.round(cpm / 5)} сл/хв · ${accOf(st).toFixed(1)}%`;
+}
+
 async function renderLibrary() {
   const books = await db.listBooks();
+  const total = books.reduce((t, b) => {
+    const st = b.stats ?? db.emptyStats();
+    t.activeMs += st.activeMs; t.keystrokes += st.keystrokes; t.errors += st.errors; t.correct += st.correct;
+    return t;
+  }, db.emptyStats());
+  els.total.textContent = total.activeMs >= 1000
+    ? `Всього: ${fmtTime(total.activeMs)} · ${Math.round(cpmOf(total) / 5)} сл/хв · ${Math.round(cpmOf(total))} зн/хв · точність ${accOf(total).toFixed(1)}%`
+    : "";
   els.list.replaceChildren();
   els.empty.hidden = books.length > 0;
   for (const b of books) {
@@ -79,7 +99,7 @@ async function renderLibrary() {
     li.innerHTML = `
       <div class="info">
         <div class="name"></div>
-        <div class="meta">${pct.toFixed(1)}% · ${b.length.toLocaleString("uk")} знаків</div>
+        <div class="meta">${pct.toFixed(1)}% · ${b.length.toLocaleString("uk")} знаків${statsLine(b.stats)}</div>
         <div class="bar"><div style="width:${pct}%"></div></div>
       </div>
       <button class="btn" data-act="open">${b.pos > 0 ? "Продовжити" : "Почати"}</button>
@@ -89,8 +109,8 @@ async function renderLibrary() {
     li.addEventListener("click", async (e) => {
       const act = (e.target as HTMLElement).closest("button")?.dataset.act;
       if (act === "open") location.hash = `#book=${b.id}`;
-      if (act === "restart" && confirm(`Почати «${b.title}» спочатку?`)) {
-        await db.saveMeta({ ...b, pos: 0 });
+      if (act === "restart" && confirm(`Почати «${b.title}» спочатку? Прогрес і статистику книги буде скинуто.`)) {
+        await db.saveMeta({ ...b, pos: 0, stats: db.emptyStats() });
         renderLibrary();
       }
       if (act === "delete" && confirm(`Видалити «${b.title}»?`)) {
@@ -162,9 +182,13 @@ interface Session {
   winEnd: number;
   spans: HTMLSpanElement[];
   inner: HTMLDivElement;
+  // Cumulative for the book: loaded from meta.stats and saved back.
   keystrokes: number;
   errors: number;
   activeMs: number;
+  baseCorrect: number; // correct chars from previous sessions
+  sessionStartMs: number; // activeMs when this session began
+  recent: number[]; // activeMs timestamps of correct keystrokes (for current speed)
   lastKey: number;
   dirty: boolean;
 }
@@ -172,23 +196,27 @@ let s: Session | null = null;
 
 const cursor = () => s!.start + s!.typed.length;
 
-function committed(): number {
-  const i = s!.typed.indexOf(BAD);
-  return s!.start + (i === -1 ? s!.typed.length : i);
-}
 
 function startSession(meta: db.BookMeta, source: string, at?: number) {
   const prep = prepare(source, settings);
   let start = at ?? toProcessed(prep.map, meta.pos);
-  // Rewind to the beginning of the word.
-  while (start > 0 && start < prep.text.length && !/[ \n]/.test(prep.text[start - 1]!)) start--;
+  // If we stopped mid-word, rewind to the beginning of that word.
+  if (start < prep.text.length && !/[ \n]/.test(prep.text[start]!)) {
+    while (start > 0 && !/[ \n]/.test(prep.text[start - 1]!)) start--;
+  }
   const inner = document.createElement("div");
   inner.className = "typing-inner";
   els.text.replaceChildren(inner);
   s = {
     meta, source, prep, start, typed: [],
     winStart: 0, winEnd: 0, spans: [], inner,
-    keystrokes: 0, errors: 0, activeMs: 0, lastKey: 0, dirty: false,
+    keystrokes: meta.stats?.keystrokes ?? 0,
+    errors: meta.stats?.errors ?? 0,
+    activeMs: meta.stats?.activeMs ?? 0,
+    baseCorrect: meta.stats?.correct ?? 0,
+    sessionStartMs: meta.stats?.activeMs ?? 0,
+    recent: [],
+    lastKey: 0, dirty: false,
   };
   renderWindow();
   updateStats();
@@ -346,7 +374,8 @@ function typeChar(ch: string) {
   const expected = text[c]!;
   const ok =
     ch === expected ||
-    (expected === "\n" && (ch === " " || ch === "\n")) ||
+    (settings.ignoreCase && ch.toLowerCase() === expected.toLowerCase()) ||
+    (expected === "\n" && (ch === "\n" || (settings.spaceForNewline && ch === " "))) ||
     (APOS.test(expected) && APOS.test(ch)); // any apostrophe variant is fine
   s.keystrokes++;
   if (!ok) s.errors++;
@@ -358,6 +387,7 @@ function typeChar(ch: string) {
     return;
   }
   s.typed.push(ok ? OK : BAD);
+  if (ok) s.recent.push(s.activeMs);
   refresh(c);
   refresh(c + 1);
   afterMove();
@@ -397,12 +427,18 @@ function backspace(word: boolean) {
     // Undo a whole skipped block at once.
     n = 0;
     while (n < s.typed.length && s.typed[s.typed.length - 1 - n] === SKIP) n++;
-  } else if (word) {
-    let i = cursor() - 1;
-    while (i > s.start && /[ \n]/.test(text[i]!)) i--;
-    while (i > s.start && !/[ \n]/.test(text[i - 1]!)) i--;
-    n = cursor() - Math.max(i, s.start);
+  } else {
+    if (word) {
+      let i = cursor() - 1;
+      while (i > s.start && /[ \n]/.test(text[i]!)) i--;
+      while (i > s.start && !/[ \n]/.test(text[i - 1]!)) i--;
+      n = cursor() - Math.max(i, s.start);
+    }
+    // Correct text is locked: only what follows the first error can be erased.
+    const firstBad = s.typed.indexOf(BAD);
+    n = firstBad === -1 ? 0 : Math.min(n, s.typed.length - firstBad);
   }
+  if (n === 0) return;
   for (let k = 0; k < n; k++) {
     s.typed.pop();
     refresh(cursor() + 1);
@@ -410,6 +446,19 @@ function backspace(word: boolean) {
   }
   afterMove();
 }
+
+function currentStats(): db.BookStats {
+  const sessionCorrect = s!.typed.reduce<number>((n, m) => n + (m === OK ? 1 : 0), 0);
+  return {
+    activeMs: s!.activeMs,
+    keystrokes: s!.keystrokes,
+    errors: s!.errors,
+    correct: s!.baseCorrect + sessionCorrect,
+  };
+}
+const cpmOf = (st: db.BookStats) => (st.activeMs > 1200 ? st.correct / (st.activeMs / 60000) : 0);
+const accOf = (st: db.BookStats) =>
+  st.keystrokes ? ((st.keystrokes - st.errors) / st.keystrokes) * 100 : 100;
 
 function fmtTime(ms: number): string {
   const t = Math.floor(ms / 1000);
@@ -424,38 +473,88 @@ function updateTimer() {
   const gap = s.lastKey ? performance.now() - s.lastKey : Infinity;
   const running = gap < IDLE_MS && document.activeElement === els.input;
   els.time.textContent = fmtTime(s.activeMs + (gap < 1000 ? gap : 0));
-  els.time.classList.toggle("paused", s.activeMs > 0 && !running);
+  els.time.parentElement!.classList.toggle("paused", s.activeMs > 0 && !running);
 }
 setInterval(updateTimer, 200);
 
+const NOW_WINDOW = 60_000;
+const NOW_MIN = 5_000; // don't show current speed until there's enough data
+
+/** Correct chars per minute over the last minute of active typing in this session. */
+function currentCpm(): number | null {
+  const now = s!.activeMs;
+  while (s!.recent.length && s!.recent[0]! < now - NOW_WINDOW) s!.recent.shift();
+  const span = Math.min(NOW_WINDOW, now - s!.sessionStartMs);
+  return span < NOW_MIN ? null : s!.recent.length / (span / 60000);
+}
+
 function updateStats() {
   if (!s) return;
+  const now = currentCpm();
+  els.nowCpm.textContent = now === null ? "–" : String(Math.round(now));
+  els.nowWpm.textContent = now === null ? "–" : String(Math.round(now / 5));
   updateTimer();
-  const correct = s.typed.reduce<number>((n, m) => n + (m === OK ? 1 : 0), 0);
-  const minutes = s.activeMs / 60000;
-  const cpm = minutes > 0.02 ? correct / minutes : 0;
-  els.cpm.textContent = String(Math.round(cpm));
-  els.wpm.textContent = String(Math.round(cpm / 5));
-  els.acc.textContent = s.keystrokes
-    ? (((s.keystrokes - s.errors) / s.keystrokes) * 100).toFixed(1)
-    : "100";
+  const st = currentStats();
+  els.cpm.textContent = String(Math.round(cpmOf(st)));
+  els.wpm.textContent = String(Math.round(cpmOf(st) / 5));
+  const acc = accOf(st);
+  els.acc.textContent = acc.toFixed(1);
+  els.acc.parentElement!.classList.toggle("mid", acc < 95 && acc >= 90);
+  els.acc.parentElement!.classList.toggle("low", acc < 90);
   const len = s.prep.text.length || 1;
   const pct = (cursor() / len) * 100;
   els.progress.textContent = pct.toFixed(2);
   els.bar.style.width = `${pct}%`;
 }
 
+// Progress goes to localStorage synchronously on every save (survives an instant
+// reload), and to IndexedDB asynchronously; the pending localStorage entry is
+// folded into IndexedDB on the next start.
+const PENDING = "typebook.pos.";
+
+function currentPos(): number {
+  const c = cursor();
+  return c >= s!.prep.map.length ? s!.source.length : s!.prep.map[c]!;
+}
+
+function saveProgressSync() {
+  if (!s || !s.dirty) return;
+  s.meta = { ...s.meta, pos: currentPos(), stats: currentStats(), openedAt: Date.now() };
+  try {
+    localStorage.setItem(PENDING + s.meta.id, JSON.stringify({ pos: s.meta.pos, stats: s.meta.stats }));
+  } catch {}
+}
+
 async function saveProgress() {
   if (!s || !s.dirty) return;
+  saveProgressSync();
   s.dirty = false;
-  const c = committed();
-  const pos = c >= s.prep.map.length ? s.source.length : s.prep.map[c]!;
-  s.meta = { ...s.meta, pos, openedAt: Date.now() };
   await db.saveMeta(s.meta);
+  try {
+    localStorage.removeItem(PENDING + s.meta.id);
+  } catch {}
 }
+
+/** Apply positions saved to localStorage that didn't make it into IndexedDB. */
+async function flushPending() {
+  let keys: string[] = [];
+  try {
+    keys = Object.keys(localStorage).filter((k) => k.startsWith(PENDING));
+  } catch {}
+  for (const key of keys) {
+    const meta = await db.getMeta(key.slice(PENDING.length));
+    try {
+      const { pos, stats } = JSON.parse(localStorage.getItem(key) ?? "");
+      if (meta && Number.isFinite(pos)) await db.saveMeta({ ...meta, pos, stats: stats ?? meta.stats });
+    } catch {}
+    localStorage.removeItem(key);
+  }
+}
+
 setInterval(saveProgress, 3000);
 addEventListener("visibilitychange", () => document.hidden && saveProgress());
 addEventListener("pagehide", () => saveProgress());
+addEventListener("beforeunload", saveProgressSync);
 
 // ---------- input ----------
 function focusTyping() {
@@ -512,9 +611,10 @@ els.input.addEventListener("input", () => {
 // ---------- settings dialog ----------
 const opt = {
   punct: $<HTMLInputElement>("opt-punct"),
-  lower: $<HTMLInputElement>("opt-lower"),
+  ignoreCase: $<HTMLInputElement>("opt-case"),
   quotes: $<HTMLInputElement>("opt-quotes"),
   stop: $<HTMLInputElement>("opt-stop"),
+  spaceNl: $<HTMLInputElement>("opt-space-nl"),
   size: $<HTMLInputElement>("opt-size"),
   sizeVal: $("opt-size-val"),
   lines: $<HTMLInputElement>("opt-lines"),
@@ -522,9 +622,10 @@ const opt = {
 };
 function syncSettingsForm() {
   opt.punct.checked = settings.removePunct;
-  opt.lower.checked = settings.lowercase;
+  opt.ignoreCase.checked = settings.ignoreCase;
   opt.quotes.checked = settings.simplifyQuotes;
   opt.stop.checked = settings.stopOnError;
+  opt.spaceNl.checked = settings.spaceForNewline;
   opt.size.value = String(settings.fontSize);
   opt.sizeVal.textContent = `${settings.fontSize}px`;
   opt.lines.value = String(settings.lines);
@@ -537,7 +638,6 @@ $("nav-settings").addEventListener("click", () => {
 });
 function onTextOptionChange() {
   settings.removePunct = opt.punct.checked;
-  settings.lowercase = opt.lower.checked;
   settings.simplifyQuotes = opt.quotes.checked;
   saveSettings();
   if (s) {
@@ -545,7 +645,15 @@ function onTextOptionChange() {
     saveProgress().then(() => s && startSession(s.meta, s.source));
   }
 }
-for (const el of [opt.punct, opt.lower, opt.quotes]) el.addEventListener("change", onTextOptionChange);
+for (const el of [opt.punct, opt.quotes]) el.addEventListener("change", onTextOptionChange);
+opt.ignoreCase.addEventListener("change", () => {
+  settings.ignoreCase = opt.ignoreCase.checked;
+  saveSettings();
+});
+opt.spaceNl.addEventListener("change", () => {
+  settings.spaceForNewline = opt.spaceNl.checked;
+  saveSettings();
+});
 opt.stop.addEventListener("change", () => {
   settings.stopOnError = opt.stop.checked;
   saveSettings();
@@ -564,11 +672,40 @@ els.dialog.addEventListener("close", () => {
   if (!els.typing.hidden) focusTyping();
 });
 
+// ---------- theme ----------
+type Theme = "system" | "light" | "dark";
+const THEMES: Theme[] = ["system", "light", "dark"];
+const THEME_UI: Record<Theme, [string, string]> = {
+  system: ["◐", "Тема: як у системі"],
+  light: ["☀", "Тема: світла"],
+  dark: ["☾", "Тема: темна"],
+};
+let theme: Theme = "system";
+try {
+  const t = localStorage.getItem("typebook.theme") as Theme | null;
+  if (t && THEMES.includes(t)) theme = t;
+} catch {}
+function applyTheme() {
+  if (theme === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  const btn = $("nav-theme");
+  [btn.textContent, btn.title] = THEME_UI[theme];
+  try {
+    localStorage.setItem("typebook.theme", theme);
+  } catch {}
+}
+applyTheme();
+$("nav-theme").addEventListener("click", () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length]!;
+  applyTheme();
+});
+
 // ---------- routing ----------
 $("nav-library").addEventListener("click", () => (location.hash = ""));
 
 async function route() {
   await saveProgress();
+  await flushPending();
   const id = location.hash.match(/^#book=(.+)$/)?.[1];
   if (id) {
     const [meta, text] = await Promise.all([db.getMeta(id), db.getText(id)]);

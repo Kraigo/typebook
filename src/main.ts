@@ -9,13 +9,16 @@ interface Settings extends TextOptions {
   stopOnError: boolean;
   ignoreCase: boolean;
   spaceForNewline: boolean;
+  caret: Caret;
 }
+type Caret = "underline" | "bar" | "block";
 const DEFAULTS: Settings = {
   removePunct: false,
   ignoreCase: false,
   spaceForNewline: true,
   simplifyQuotes: true,
   stopOnError: false,
+  caret: "underline",
   fontSize: 24,
   lines: 4,
 };
@@ -66,6 +69,7 @@ const els = {
 function applyVisualSettings() {
   document.documentElement.style.setProperty("--font-size", `${settings.fontSize}px`);
   document.documentElement.style.setProperty("--lines", String(settings.lines));
+  els.box.dataset.caret = settings.caret;
 }
 applyVisualSettings();
 
@@ -191,6 +195,7 @@ interface Session {
   recent: number[]; // activeMs timestamps of correct keystrokes (for current speed)
   lastKey: number;
   dirty: boolean;
+  curBad: boolean; // stop-on-error: wrong key pressed at the cursor, not yet corrected
 }
 let s: Session | null = null;
 
@@ -216,7 +221,7 @@ function startSession(meta: db.BookMeta, source: string, at?: number) {
     baseCorrect: meta.stats?.correct ?? 0,
     sessionStartMs: meta.stats?.activeMs ?? 0,
     recent: [],
-    lastKey: 0, dirty: false,
+    lastKey: 0, dirty: false, curBad: false,
   };
   renderWindow();
   updateStats();
@@ -231,7 +236,7 @@ function classFor(i: number): string {
     if (m === OK) cls += " ok";
     else if (m === SKIP) cls += " skip";
     else cls += " bad" + (/[ \n]/.test(s!.prep.text[i]!) ? " sp" : "");
-  } else if (i === c) cls += " cur";
+  } else if (i === c) cls += s!.curBad ? " cur bad" : " cur";
   return cls.trim();
 }
 
@@ -380,12 +385,13 @@ function typeChar(ch: string) {
   s.keystrokes++;
   if (!ok) s.errors++;
   if (!ok && settings.stopOnError) {
-    const span = s.spans[c - s.winStart];
-    span?.classList.add("bad");
-    setTimeout(() => span && (span.className = classFor(c)), 150);
+    // Keep the letter red until the right key is pressed.
+    s.curBad = true;
+    refresh(c);
     updateStats();
     return;
   }
+  s.curBad = false;
   s.typed.push(ok ? OK : BAD);
   if (ok) s.recent.push(s.activeMs);
   refresh(c);
@@ -400,6 +406,7 @@ function skipTo(end: number) {
   const c = cursor();
   const target = Math.min(end + 1, s.prep.text.length);
   if (target <= c) return;
+  s.curBad = false;
   for (let i = c; i < target; i++) s.typed.push(SKIP);
   for (let i = c; i <= target; i++) refresh(i);
   s.lastKey = 0; // don't count the jump as typing time
@@ -412,6 +419,7 @@ function rewindTo(target: number) {
   if (!s) return;
   const c = cursor();
   if (target >= c || target < s.start) return;
+  s.curBad = false;
   s.typed.length = target - s.start;
   for (let i = target; i <= c; i++) refresh(i);
   s.lastKey = 0;
@@ -439,6 +447,7 @@ function backspace(word: boolean) {
     n = firstBad === -1 ? 0 : Math.min(n, s.typed.length - firstBad);
   }
   if (n === 0) return;
+  s.curBad = false;
   for (let k = 0; k < n; k++) {
     s.typed.pop();
     refresh(cursor() + 1);
@@ -614,6 +623,7 @@ const opt = {
   ignoreCase: $<HTMLInputElement>("opt-case"),
   quotes: $<HTMLInputElement>("opt-quotes"),
   stop: $<HTMLInputElement>("opt-stop"),
+  caret: $<HTMLSelectElement>("opt-caret"),
   spaceNl: $<HTMLInputElement>("opt-space-nl"),
   size: $<HTMLInputElement>("opt-size"),
   sizeVal: $("opt-size-val"),
@@ -625,6 +635,7 @@ function syncSettingsForm() {
   opt.ignoreCase.checked = settings.ignoreCase;
   opt.quotes.checked = settings.simplifyQuotes;
   opt.stop.checked = settings.stopOnError;
+  opt.caret.value = settings.caret;
   opt.spaceNl.checked = settings.spaceForNewline;
   opt.size.value = String(settings.fontSize);
   opt.sizeVal.textContent = `${settings.fontSize}px`;
@@ -652,6 +663,11 @@ opt.ignoreCase.addEventListener("change", () => {
 });
 opt.spaceNl.addEventListener("change", () => {
   settings.spaceForNewline = opt.spaceNl.checked;
+  saveSettings();
+});
+opt.caret.addEventListener("change", () => {
+  settings.caret = opt.caret.value as Caret;
+  applyVisualSettings();
   saveSettings();
 });
 opt.stop.addEventListener("change", () => {

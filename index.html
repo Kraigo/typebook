@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Typebook — сліпий друк по книгах</title>
+  <link rel="stylesheet" href="./src/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <button class="logo" id="nav-library" title="Бібліотека">typebook</button>
+    <div class="top-title" id="book-title"></div>
+    <button class="icon-btn" id="nav-settings" title="Налаштування">⚙</button>
+  </header>
+
+  <main>
+    <!-- Library -->
+    <section id="view-library" class="view">
+      <div class="panel">
+        <h2>Додати книгу</h2>
+        <label class="drop" id="drop">
+          <input type="file" id="file-input" accept=".epub,.fb2,.zip,.txt,text/plain" multiple hidden />
+          <span>Перетягніть файл сюди або <u>оберіть</u><br /><small>EPUB, FB2, FB2.ZIP, TXT</small></span>
+        </label>
+        <details class="paste">
+          <summary>…або вставте текст</summary>
+          <input type="text" id="paste-title" placeholder="Назва" />
+          <textarea id="paste-text" rows="8" placeholder="Текст книги"></textarea>
+          <button id="paste-add" class="btn">Додати</button>
+        </details>
+        <div id="import-status" class="status"></div>
+      </div>
+      <div class="panel">
+        <h2>Бібліотека</h2>
+        <ul id="book-list" class="book-list"></ul>
+        <p id="book-empty" class="muted">Поки що порожньо.</p>
+      </div>
+    </section>
+
+    <!-- Typing -->
+    <section id="view-typing" class="view" hidden>
+      <div class="stats">
+        <span title="Час друку (пауза після 5 с без натискань)"><b id="st-time">0:00</b></span>
+        <span><b id="st-wpm">0</b> сл/хв</span>
+        <span><b id="st-cpm">0</b> зн/хв</span>
+        <span><b id="st-acc">100</b>% точність</span>
+        <span><b id="st-progress">0</b>%</span>
+      </div>
+      <div class="typing-box" id="typing-box" tabindex="0">
+        <div class="typing-text" id="typing-text"></div>
+        <div class="rail">
+          <button type="button" id="btn-skip" class="rail-btn skip" tabindex="-1" title="Пропустити абзац (Tab)" hidden>✕</button>
+          <button type="button" id="btn-restore" class="rail-btn restore" tabindex="-1" title="Повернутися на початок пропущеного абзацу" hidden>↺</button>
+        </div>
+        <div class="focus-hint" id="focus-hint">Клікніть, щоб почати друкувати</div>
+      </div>
+      <input id="hidden-input" class="hidden-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      <div class="progress"><div id="progress-bar"></div></div>
+      <p class="hint muted">Backspace — стерти символ · Ctrl+Backspace — стерти слово · Tab або ✕ — пропустити абзац · Esc — пауза</p>
+    </section>
+  </main>
+
+  <dialog id="settings">
+    <form method="dialog">
+      <h2>Налаштування</h2>
+      <label class="row"><input type="checkbox" id="opt-punct" /> Прибрати пунктуацію</label>
+      <label class="row"><input type="checkbox" id="opt-lower" /> Лише малі літери</label>
+      <label class="row"><input type="checkbox" id="opt-quotes" /> Спростити лапки й тире (« » — → " -)</label>
+      <label class="row"><input type="checkbox" id="opt-stop" /> Не йти далі при помилці</label>
+      <label class="row col">Розмір тексту: <b id="opt-size-val"></b>
+        <input type="range" id="opt-size" min="14" max="48" step="1" />
+      </label>
+      <label class="row col">Рядків на екрані: <b id="opt-lines-val"></b>
+        <input type="range" id="opt-lines" min="2" max="10" step="1" />
+      </label>
+      <div class="actions"><button class="btn">Готово</button></div>
+    </form>
+  </dialog>
+
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

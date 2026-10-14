@@ -1,0 +1,141 @@
+:root {
+  --bg: #f6f5f1;
+  --panel: #ffffff;
+  --fg: #22252a;
+  --muted: #8a8f98;
+  --done: #b4b8bf;
+  --err: #e0353d;
+  --err-bg: #fde3e4;
+  --accent: #2f6fde;
+  --border: #e3e1da;
+  --font-size: 24px;
+  --lines: 4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1d21;
+    --panel: #24272c;
+    --fg: #e6e6e6;
+    --muted: #8a8f98;
+    --done: #5b6068;
+    --err: #ff5a62;
+    --err-bg: #4a1f23;
+    --accent: #6ea0ff;
+    --border: #33373d;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; min-height: 100vh; }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; cursor: pointer; }
+
+.top {
+  display: flex; align-items: center; gap: 16px;
+  padding: 12px 24px; border-bottom: 1px solid var(--border);
+}
+.logo { background: none; border: 0; font-weight: 700; font-size: 18px; padding: 0; }
+.top-title { flex: 1; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.icon-btn { background: none; border: 1px solid var(--border); border-radius: 8px; width: 36px; height: 36px; font-size: 18px; }
+
+main { max-width: 1000px; margin: 0 auto; padding: 24px 16px; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+.panel h2 { margin: 0 0 12px; font-size: 18px; }
+.muted { color: var(--muted); }
+.btn { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 8px 16px; }
+.btn.ghost { background: none; color: var(--fg); border: 1px solid var(--border); }
+.btn.danger { background: none; color: var(--err); border: 1px solid var(--border); }
+
+.drop {
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  min-height: 120px; border: 2px dashed var(--border); border-radius: 10px; cursor: pointer;
+  color: var(--muted);
+}
+.drop.over { border-color: var(--accent); color: var(--accent); }
+.paste { margin-top: 12px; }
+.paste summary { cursor: pointer; color: var(--muted); }
+.paste input, .paste textarea {
+  display: block; width: 100%; margin: 8px 0; padding: 8px; font: inherit;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 8px;
+}
+.status { margin-top: 10px; min-height: 1.2em; color: var(--muted); }
+.status.error { color: var(--err); }
+
+.book-list { list-style: none; margin: 0; padding: 0; }
+.book-list li {
+  display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border);
+}
+.book-list li:first-child { border-top: 0; }
+.book-list .info { flex: 1; min-width: 0; }
+.book-list .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book-list .meta { font-size: 13px; color: var(--muted); }
+.book-list .bar { height: 4px; background: var(--border); border-radius: 2px; margin-top: 6px; }
+.book-list .bar div { height: 100%; background: var(--accent); border-radius: 2px; }
+
+.stats { display: flex; gap: 24px; flex-wrap: wrap; color: var(--muted); margin-bottom: 16px; }
+.stats b { color: var(--fg); font-variant-numeric: tabular-nums; }
+
+.typing-box {
+  position: relative; outline: none;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 20px 24px;
+}
+.typing-box:focus-within, .typing-box.focused { border-color: var(--accent); }
+.typing-text {
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--font-size); line-height: 1.6;
+  height: calc(var(--font-size) * 1.6 * var(--lines));
+  overflow: hidden; white-space: pre-wrap; word-break: normal; overflow-wrap: break-word;
+}
+.typing-inner { position: relative; transition: transform 120ms ease; }
+.typing-text span { border-radius: 2px; }
+.stats .paused { color: var(--muted); }
+.stats .paused::after { content: " ⏸"; }
+.typing-text .ok { color: var(--done); }
+.typing-text .bad { color: var(--err); background: var(--err-bg); }
+.typing-text .bad.sp { text-decoration: underline; }
+.typing-text .cur { position: relative; }
+.typing-text .cur::before {
+  content: ""; position: absolute; left: -1px; top: 0.2em; bottom: 0.2em; width: 2px;
+  background: var(--accent); border-radius: 1px; animation: blink 1s step-end infinite;
+}
+.typing-box:not(.focused) .cur::before { animation: none; opacity: .4; }
+.typing-text .nl { color: var(--done); opacity: .6; }
+@keyframes blink { 50% { opacity: 0; } }
+.focus-hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(3px); background: color-mix(in srgb, var(--panel) 60%, transparent);
+  border-radius: 12px; color: var(--muted); cursor: pointer;
+}
+.typing-box.focused .focus-hint { display: none; }
+.hidden-input { position: fixed; left: -1000px; top: 0; opacity: 0; width: 1px; height: 1px; }
+.progress { height: 4px; background: var(--border); border-radius: 2px; margin-top: 16px; }
+.progress div { height: 100%; width: 0; background: var(--accent); border-radius: 2px; }
+.hint { font-size: 13px; text-align: center; }
+
+dialog {
+  border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--fg);
+  padding: 20px 24px; width: min(420px, calc(100vw - 32px));
+}
+dialog::backdrop { background: rgba(0,0,0,.35); }
+dialog h2 { margin: 0 0 16px; font-size: 18px; }
+.row { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.row.col { flex-direction: column; align-items: stretch; }
+.actions { display: flex; justify-content: flex-end; margin-top: 16px; }
+
+/* skip / restore buttons beside the current line */
+.typing-text .skip { color: var(--done); opacity: .5; text-decoration: line-through; }
+.rail { position: absolute; left: -44px; top: 0; width: 28px; }
+.rail-btn {
+  position: absolute; left: 0; width: 28px; height: 28px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; line-height: 1; font-family: system-ui, sans-serif;
+  background: none; border: 1px solid transparent; border-radius: 50%;
+  color: var(--muted); transition: top 120ms ease, color 120ms, background 120ms;
+}
+.rail-btn.skip:hover { color: #fff; background: var(--err); }
+.rail-btn.restore:hover { color: var(--accent); border-color: var(--accent); }
+@media (max-width: 1100px) {
+  .typing-box { padding-left: 52px; }
+  .rail { left: 14px; }
+}

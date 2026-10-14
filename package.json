@@ -1,0 +1,17 @@
+{
+  "name": "typebook",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun ./index.html",
+    "typecheck": "tsc -p .",
+    "build": "rm -rf dist && bun build ./index.html --outdir dist --minify"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,7 +1,10 @@
 // Text normalization (on import) and per-settings transformation (on open).
 
+/** type: punctuation must be typed; auto: shown but skipped by the caret; remove: hidden. */
+export type PunctMode = "type" | "auto" | "remove";
+
 export interface TextOptions {
-  removePunct: boolean;
+  punct: PunctMode;
   simplifyQuotes: boolean;
 }
 
@@ -41,6 +44,8 @@ export interface Prepared {
   text: string;
   /** map[i] = index in source text of processed char i */
   map: Int32Array;
+  /** auto[i] = 1 if char i is skipped automatically (punct: "auto") */
+  auto: Uint8Array;
 }
 
 export function prepare(src: string, o: TextOptions): Prepared {
@@ -86,7 +91,7 @@ export function prepare(src: string, o: TextOptions): Prepared {
     if (inWord && APOS.test(ch)) {
       // Ukrainian apostrophe, as produced by the Ukrainian keyboard layout.
       if (o.simplifyQuotes) ch = "ʼ";
-    } else if (o.removePunct && PUNCT.test(ch)) {
+    } else if (o.punct === "remove" && PUNCT.test(ch)) {
       if (inWord && HYPHEN.test(ch)) ch = "-";
       else { push(" ", at); continue; }
     } else if (o.simplifyQuotes && QUOTE_MAP[ch]) {
@@ -98,7 +103,27 @@ export function prepare(src: string, o: TextOptions): Prepared {
   while (out.length && (out[out.length - 1] === " " || out[out.length - 1] === "\n")) {
     out.pop(); map.pop();
   }
-  return { text: out.join(""), map: Int32Array.from(map) };
+  const text = out.join("");
+  return { text, map: Int32Array.from(map), auto: o.punct === "auto" ? autoMask(text) : new Uint8Array(text.length) };
+}
+
+/**
+ * Mark punctuation (except apostrophes/hyphens inside words) as auto-skipped,
+ * plus any space or line break that would otherwise have to be typed twice in
+ * a row once the punctuation between them is gone ("слово — слово").
+ */
+function autoMask(text: string): Uint8Array {
+  const auto = new Uint8Array(text.length);
+  let lastTyped = "\n";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    const inWord = LETTER.test(text[i - 1] ?? "") && LETTER.test(text[i + 1] ?? "");
+    const punct = PUNCT.test(ch) && !(inWord && (APOS.test(ch) || HYPHEN.test(ch)));
+    const extraSpace = (ch === " " || ch === "\n") && (lastTyped === " " || lastTyped === "\n");
+    if (punct || extraSpace) auto[i] = 1;
+    else lastTyped = ch;
+  }
+  return auto;
 }
 
 /** First processed index whose source index is >= srcPos. */

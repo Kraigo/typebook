@@ -1,6 +1,6 @@
 import * as db from "./db";
 import { parseFile } from "./parsers";
-import { normalize, prepare, toProcessed, type Prepared, type TextOptions } from "./text";
+import { normalize, prepare, toProcessed, type Prepared, type PunctMode, type TextOptions } from "./text";
 
 // ---------- settings ----------
 interface Settings extends TextOptions {
@@ -13,7 +13,7 @@ interface Settings extends TextOptions {
 }
 type Caret = "underline" | "bar" | "block";
 const DEFAULTS: Settings = {
-  removePunct: false,
+  punct: "type",
   ignoreCase: false,
   spaceForNewline: true,
   simplifyQuotes: true,
@@ -24,7 +24,9 @@ const DEFAULTS: Settings = {
 };
 function loadSettings(): Settings {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("typebook.settings") ?? "{}") };
+    const saved = JSON.parse(localStorage.getItem("typebook.settings") ?? "{}");
+    if (saved.removePunct && !saved.punct) saved.punct = "remove"; // old boolean setting
+    return { ...DEFAULTS, ...saved };
   } catch {
     return { ...DEFAULTS };
   }
@@ -66,12 +68,48 @@ const els = {
   dialog: $<HTMLDialogElement>("settings"),
 };
 
+const lineHeight = () => Math.round(settings.fontSize * 1.6);
+
+/**
+ * Glyphs at fractional x positions get their edges clipped by partial repaints
+ * when individual letters change colour, so round the monospace advance up to a
+ * whole pixel with letter-spacing.
+ */
+function snapLetterSpacing() {
+  // Measure the real pitch of one-letter spans, as rendered (layout rounds to 1/64 px).
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;letter-spacing:0";
+  probe.innerHTML = "<span>щ</span>".repeat(50);
+  els.text.append(probe);
+  const pitch = () =>
+    (probe.lastElementChild!.getBoundingClientRect().left - probe.firstElementChild!.getBoundingClientRect().left) / 49;
+  const w = pitch();
+  if (w > 0) {
+    const target = Math.ceil(w - 0.001);
+    let best = 0, bestErr = Infinity;
+    for (let k = -8; k <= 8; k++) {
+      const ls = Math.max(0, target - w + k / 256);
+      probe.style.letterSpacing = `${ls}px`;
+      const err = Math.abs(pitch() - target);
+      if (err < bestErr) [best, bestErr] = [ls, err];
+    }
+    document.documentElement.style.setProperty("--ls", `${best.toFixed(5)}px`);
+  }
+  probe.remove();
+}
+
 function applyVisualSettings() {
+  document.documentElement.style.setProperty("--lh", `${lineHeight()}px`);
   document.documentElement.style.setProperty("--font-size", `${settings.fontSize}px`);
   document.documentElement.style.setProperty("--lines", String(settings.lines));
   els.box.dataset.caret = settings.caret;
+  snapLetterSpacing();
 }
 applyVisualSettings();
+document.fonts?.ready.then(() => {
+  applyVisualSettings();
+  if (s) renderWindow();
+});
 
 // ---------- library ----------
 function setStatus(msg: string, error = false) {
@@ -173,8 +211,9 @@ const WINDOW_AFTER = 3000;
 const IDLE_MS = 5000; // a pause longer than this stops the timer
 const APOS = /^['’ʼ`‘´]$/;
 
-const BAD = 0 as const, OK = 1 as const, SKIP = 2 as const;
-type Mark = typeof BAD | typeof OK | typeof SKIP;
+// SKIP: skipped by the user (✕/Tab); AUTO: skipped automatically (punctuation in "auto" mode).
+const BAD = 0 as const, OK = 1 as const, SKIP = 2 as const, AUTO = 3 as const;
+type Mark = typeof BAD | typeof OK | typeof SKIP | typeof AUTO;
 
 interface Session {
   meta: db.BookMeta;
@@ -195,6 +234,7 @@ interface Session {
   recent: number[]; // activeMs timestamps of correct keystrokes (for current speed)
   lastKey: number;
   dirty: boolean;
+  autoSkipped: string; // punctuation just jumped over; typing it out of habit isn't an error
   curBad: boolean; // stop-on-error: wrong key pressed at the cursor, not yet corrected
 }
 let s: Session | null = null;
@@ -221,8 +261,10 @@ function startSession(meta: db.BookMeta, source: string, at?: number) {
     baseCorrect: meta.stats?.correct ?? 0,
     sessionStartMs: meta.stats?.activeMs ?? 0,
     recent: [],
-    lastKey: 0, dirty: false, curBad: false,
+    lastKey: 0, dirty: false, curBad: false, autoSkipped: "",
   };
+  advanceAuto();
+  snapLetterSpacing(); // needs the typing view visible to measure
   renderWindow();
   updateStats();
 }
@@ -233,7 +275,7 @@ function classFor(i: number): string {
   if (i < s!.start) cls += " ok";
   else if (i < c) {
     const m = s!.typed[i - s!.start];
-    if (m === OK) cls += " ok";
+    if (m === OK || m === AUTO) cls += " ok";
     else if (m === SKIP) cls += " skip";
     else cls += " bad" + (/[ \n]/.test(s!.prep.text[i]!) ? " sp" : "");
   } else if (i === c) cls += s!.curBad ? " cur bad" : " cur";
@@ -298,7 +340,7 @@ function refresh(i: number) {
 function scrollToCursor() {
   const span = s!.spans[cursor() - s!.winStart];
   if (!span) return;
-  const lh = settings.fontSize * 1.6;
+  const lh = lineHeight();
   const keepLine = settings.lines >= 3 ? 1 : 0;
   const top = lineTop(cursor())!;
   const y = Math.max(0, top - lh * keepLine);
@@ -310,7 +352,7 @@ function scrollToCursor() {
 function lineTop(i: number): number | undefined {
   const span = s!.spans[i - s!.winStart];
   if (!span) return undefined;
-  const lh = settings.fontSize * 1.6;
+  const lh = lineHeight();
   // Rect difference is unaffected by the inner transform (both move together).
   const top = span.getBoundingClientRect().top - s!.inner.getBoundingClientRect().top;
   return Math.round(top / lh) * lh;
@@ -334,7 +376,7 @@ function restoreTarget(): number | null {
 
 /** Position the ✕ (skip current paragraph) and ↺ (restore skipped one) buttons beside the text. */
 function updateRail(scrollY: number) {
-  const lh = settings.fontSize * 1.6;
+  const lh = lineHeight();
   const visible = lh * settings.lines;
   const base = els.text.offsetTop - scrollY;
   const place = (btn: HTMLElement, top: number | undefined) => {
@@ -358,7 +400,21 @@ function ensureWindow() {
   if (c < s!.winStart || (c > s!.winEnd - 1000 && s!.winEnd < s!.prep.text.length)) renderWindow();
 }
 
+/** Move the cursor past auto-skipped characters. */
+function advanceAuto() {
+  const { text, auto } = s!.prep;
+  let c = cursor();
+  while (c < text.length && auto[c]) {
+    s!.typed.push(AUTO);
+    s!.autoSkipped += text[c];
+    refresh(c);
+    c++;
+  }
+  refresh(c);
+}
+
 function afterMove() {
+  advanceAuto();
   s!.dirty = true;
   ensureWindow();
   scrollToCursor();
@@ -382,6 +438,13 @@ function typeChar(ch: string) {
     (settings.ignoreCase && ch.toLowerCase() === expected.toLowerCase()) ||
     (expected === "\n" && (ch === "\n" || (settings.spaceForNewline && ch === " "))) ||
     (APOS.test(expected) && APOS.test(ch)); // any apostrophe variant is fine
+  const habit = s.autoSkipped.indexOf(ch);
+  if (!ok && ch !== " " && habit !== -1) {
+    // Punctuation the caret already jumped over — ignore, don't count as an error.
+    s.autoSkipped = s.autoSkipped.slice(habit + 1);
+    return;
+  }
+  s.autoSkipped = "";
   s.keystrokes++;
   if (!ok) s.errors++;
   if (!ok && settings.stopOnError) {
@@ -430,11 +493,15 @@ function rewindTo(target: number) {
 function backspace(word: boolean) {
   if (!s || s.typed.length === 0) return;
   const { text } = s.prep;
-  let n = 1;
-  if (s.typed[s.typed.length - 1] === SKIP) {
+  const len = s.typed.length;
+  // Auto-skipped punctuation goes together with the character before it.
+  let autos = 0;
+  while (autos < len && s.typed[len - 1 - autos] === AUTO) autos++;
+  let n = autos + 1;
+  if (s.typed[len - 1 - autos] === SKIP) {
     // Undo a whole skipped block at once.
-    n = 0;
-    while (n < s.typed.length && s.typed[s.typed.length - 1 - n] === SKIP) n++;
+    n = autos;
+    while (n < len && s.typed[len - 1 - n] === SKIP) n++;
   } else {
     if (word) {
       let i = cursor() - 1;
@@ -619,7 +686,7 @@ els.input.addEventListener("input", () => {
 
 // ---------- settings dialog ----------
 const opt = {
-  punct: $<HTMLInputElement>("opt-punct"),
+  punct: $<HTMLSelectElement>("opt-punct"),
   ignoreCase: $<HTMLInputElement>("opt-case"),
   quotes: $<HTMLInputElement>("opt-quotes"),
   stop: $<HTMLInputElement>("opt-stop"),
@@ -631,7 +698,7 @@ const opt = {
   linesVal: $("opt-lines-val"),
 };
 function syncSettingsForm() {
-  opt.punct.checked = settings.removePunct;
+  opt.punct.value = settings.punct;
   opt.ignoreCase.checked = settings.ignoreCase;
   opt.quotes.checked = settings.simplifyQuotes;
   opt.stop.checked = settings.stopOnError;
@@ -648,7 +715,7 @@ $("nav-settings").addEventListener("click", () => {
   els.dialog.showModal();
 });
 function onTextOptionChange() {
-  settings.removePunct = opt.punct.checked;
+  settings.punct = opt.punct.value as PunctMode;
   settings.simplifyQuotes = opt.quotes.checked;
   saveSettings();
   if (s) {

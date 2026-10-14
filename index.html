@@ -88,7 +88,13 @@
   <dialog id="settings">
     <form method="dialog">
       <h2>Налаштування</h2>
-      <label class="row"><input type="checkbox" id="opt-punct" /> Прибрати пунктуацію</label>
+      <label class="row">Пунктуація:
+        <select id="opt-punct">
+          <option value="type">друкувати</option>
+          <option value="auto">показувати, але пропускати</option>
+          <option value="remove">прибрати з тексту</option>
+        </select>
+      </label>
       <label class="row"><input type="checkbox" id="opt-case" /> Ігнорувати регістр літер</label>
       <label class="row"><input type="checkbox" id="opt-quotes" /> Спростити лапки й тире (« » — → " -)</label>
       <label class="row"><input type="checkbox" id="opt-space-nl" /> Пробіл замість Enter у кінці абзацу (↵)</label>

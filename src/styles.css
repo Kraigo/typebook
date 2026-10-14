@@ -96,8 +96,10 @@ main { max-width: 1000px; margin: 0 auto; padding: 24px 16px; }
 .typing-box:focus-within, .typing-box.focused { border-color: var(--accent); }
 .typing-text {
   font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  font-size: var(--font-size); line-height: 1.6;
-  height: calc(var(--font-size) * 1.6 * var(--lines));
+  font-size: var(--font-size); line-height: var(--lh, 1.6);
+  /* integer line height and char advance (set from JS) keep every glyph on whole pixels */
+  letter-spacing: var(--ls, 0);
+  height: calc(var(--lh, 38px) * var(--lines));
   overflow: hidden; white-space: pre-wrap; word-break: normal; overflow-wrap: break-word;
   /* room so glyph edges and the caret at line start aren't clipped */
   padding: 0 4px; margin: 0 -4px;

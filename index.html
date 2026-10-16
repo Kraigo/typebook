@@ -45,6 +45,10 @@
     <!-- Typing -->
     <section id="view-typing" class="view" hidden>
       <div class="stats">
+        <div class="chip chip-layout" id="chip-layout" title="Розкладка клавіатури (визначається за натиснутими клавішами)" hidden>
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
+          <b id="st-layout"></b><small id="st-layout-hint"></small>
+        </div>
         <div class="chip chip-time" title="Час друку (пауза після 5 с без натискань)">
           <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2"/><path d="M10 2h4"/></svg>
           <b id="st-time">0:00</b><span class="badge">пауза</span>
@@ -80,6 +84,7 @@
         <div class="focus-hint" id="focus-hint">Клікніть, щоб почати друкувати</div>
       </div>
       <input id="hidden-input" class="hidden-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      <div class="key-trail" id="key-trail" aria-hidden="true"></div>
       <div class="progress"><div id="progress-bar"></div></div>
       <p class="hint muted">Backspace — стерти помилку · Ctrl+Backspace — до початку слова · Tab або ✕ — пропустити абзац · Esc — пауза</p>
     </section>
@@ -98,6 +103,7 @@
       <label class="row"><input type="checkbox" id="opt-case" /> Ігнорувати регістр літер</label>
       <label class="row"><input type="checkbox" id="opt-quotes" /> Спростити лапки й тире (« » — → " -)</label>
       <label class="row"><input type="checkbox" id="opt-space-nl" /> Пробіл замість Enter у кінці абзацу (↵)</label>
+      <label class="row"><input type="checkbox" id="opt-trail" /> Показувати анімовані літери друку</label>
       <label class="row"><input type="checkbox" id="opt-stop" /> Не йти далі при помилці</label>
       <label class="row">Курсор:
         <select id="opt-caret">

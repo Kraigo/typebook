@@ -10,15 +10,17 @@ interface Settings extends TextOptions {
   ignoreCase: boolean;
   spaceForNewline: boolean;
   caret: Caret;
+  keyTrail: boolean;
 }
 type Caret = "underline" | "bar" | "block";
 const DEFAULTS: Settings = {
-  punct: "type",
-  ignoreCase: false,
+  punct: "auto",
+  ignoreCase: true,
   spaceForNewline: true,
   simplifyQuotes: true,
-  stopOnError: false,
+  stopOnError: true,
   caret: "underline",
+  keyTrail: true,
   fontSize: 24,
   lines: 4,
 };
@@ -59,6 +61,10 @@ const els = {
   restore: $("btn-restore"),
   bar: $("progress-bar"),
   time: $("st-time"),
+  layout: $("st-layout"),
+  layoutHint: $("st-layout-hint"),
+  layoutChip: $("chip-layout"),
+  trail: $("key-trail"),
   nowWpm: $("st-now-wpm"),
   nowCpm: $("st-now-cpm"),
   wpm: $("st-wpm"),
@@ -245,10 +251,15 @@ const cursor = () => s!.start + s!.typed.length;
 function startSession(meta: db.BookMeta, source: string, at?: number) {
   const prep = prepare(source, settings);
   let start = at ?? toProcessed(prep.map, meta.pos);
-  // If we stopped mid-word, rewind to the beginning of that word.
-  if (start < prep.text.length && !/[ \n]/.test(prep.text[start]!)) {
-    while (start > 0 && !/[ \n]/.test(prep.text[start - 1]!)) start--;
+  const { text } = prep;
+  const isWordChar = (i: number) => /[\p{L}\p{N}]/u.test(text[i] ?? "");
+  if (isWordChar(start)) {
+    // Stopped mid-word: rewind to the beginning of that word.
+    while (start > 0 && !/[ \n]/.test(text[start - 1]!)) start--;
   }
+  // Begin on a letter, not on what's left of the previous sentence or
+  // paragraph (its punctuation, the trailing ↵, an opening dash or quote).
+  while (start < text.length && !isWordChar(start)) start++;
   const inner = document.createElement("div");
   inner.className = "typing-inner";
   els.text.replaceChildren(inner);
@@ -445,6 +456,7 @@ function typeChar(ch: string) {
     return;
   }
   s.autoSkipped = "";
+  showKey(ch, ok);
   s.keystrokes++;
   if (!ok) s.errors++;
   if (!ok && settings.stopOnError) {
@@ -456,6 +468,7 @@ function typeChar(ch: string) {
   }
   s.curBad = false;
   s.typed.push(ok ? OK : BAD);
+  updateLayoutChip();
   if (ok) s.recent.push(s.activeMs);
   refresh(c);
   refresh(c + 1);
@@ -632,6 +645,89 @@ addEventListener("visibilitychange", () => document.hidden && saveProgress());
 addEventListener("pagehide", () => saveProgress());
 addEventListener("beforeunload", saveProgressSync);
 
+// ---------- keyboard layout ----------
+// Browsers don't expose the OS input source, so it's inferred: from the
+// Keyboard API layout map where available (Chromium), and from the characters
+// the keys actually produce. і/ї/є sit where Russian has ы/ъ/э.
+type Layout = "uk" | "ru" | "en" | "other";
+const LAYOUT_NAME: Record<Layout, string> = { uk: "УКР", ru: "РУС", en: "ENG", other: "?" };
+let layout: Layout | null = null;
+
+function layoutOfChar(ch: string, code?: string): Layout | null {
+  const c = ch.toLowerCase();
+  if (/[a-z]/.test(c)) return "en";
+  if (/[ієїґ]/.test(c)) return "uk";
+  if (/[ыэъё]/.test(c)) return "ru";
+  if (/\p{Script=Cyrillic}/u.test(c)) {
+    // Shared Cyrillic letter: keep a known Cyrillic layout, otherwise assume Ukrainian.
+    return layout === "ru" || layout === "uk" ? layout : code ? "uk" : null;
+  }
+  if (/\p{L}/u.test(c)) return "other";
+  return null;
+}
+
+function setLayout(l: Layout | null) {
+  if (!l || l === layout) return;
+  layout = l;
+  updateLayoutChip();
+}
+
+/** Script the upcoming text needs, from the next letter at or after the cursor. */
+function expectedLayout(): Layout | null {
+  if (!s) return null;
+  const { text } = s.prep;
+  for (let i = cursor(); i < Math.min(text.length, cursor() + 40); i++) {
+    const ch = text[i]!.toLowerCase();
+    if (/[a-z]/.test(ch)) return "en";
+    if (/[ыэъё]/.test(ch)) return "ru";
+    if (/\p{Script=Cyrillic}/u.test(ch)) return "uk";
+  }
+  return null;
+}
+
+function updateLayoutChip() {
+  if (!layout) return;
+  els.layoutChip.hidden = false;
+  els.layout.textContent = LAYOUT_NAME[layout];
+  const want = expectedLayout();
+  // Ukrainian and Russian share most letters; only flag the obvious script mismatch.
+  const cyr = (l: Layout | null) => l === "uk" || l === "ru";
+  const wrong = want !== null && (want === "en" ? layout !== "en" : !cyr(layout)) ;
+  els.layoutChip.classList.toggle("wrong", wrong);
+  els.layoutHint.textContent = wrong ? ` → ${LAYOUT_NAME[want!]}` : "";
+}
+
+function detectLayout(e: KeyboardEvent) {
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) setLayout(layoutOfChar(e.key, e.code));
+}
+
+interface KeyboardLayoutMap { get(code: string): string | undefined }
+async function queryLayoutMap() {
+  const kb = (navigator as Navigator & { keyboard?: { getLayoutMap?: () => Promise<KeyboardLayoutMap> } }).keyboard;
+  if (!kb?.getLayoutMap) return;
+  try {
+    const map = await kb.getLayoutMap();
+    const s1 = map.get("KeyS") ?? "", q = map.get("KeyQ") ?? "";
+    setLayout(s1 === "і" ? "uk" : s1 === "ы" ? "ru" : /[a-z]/i.test(q) ? "en" : layoutOfChar(q));
+  } catch {}
+}
+
+// ---------- key trail ----------
+const KEY_LABEL: Record<string, string> = { " ": "␣", "\n": "↵" };
+
+const TRAIL_MAX = 4;
+
+/** Pop a key cap under the text that fades out; wrong keys are red. */
+function showKey(ch: string, ok: boolean) {
+  if (!settings.keyTrail) return;
+  const key = document.createElement("span");
+  key.className = ok ? "key" : "key bad";
+  key.textContent = KEY_LABEL[ch] ?? ch;
+  key.addEventListener("animationend", () => key.remove());
+  els.trail.append(key);
+  while (els.trail.childElementCount > TRAIL_MAX) els.trail.firstElementChild!.remove();
+}
+
 // ---------- input ----------
 function focusTyping() {
   els.input.focus({ preventScroll: true });
@@ -645,7 +741,10 @@ els.restore.addEventListener("click", () => {
   const t = s && restoreTarget();
   if (t !== null && t !== undefined) rewindTo(t);
 });
-els.input.addEventListener("focus", () => els.box.classList.add("focused"));
+els.input.addEventListener("focus", () => {
+  els.box.classList.add("focused");
+  queryLayoutMap();
+});
 els.input.addEventListener("blur", () => {
   els.box.classList.remove("focused");
   if (s) s.lastKey = 0; // pause timer
@@ -653,6 +752,7 @@ els.input.addEventListener("blur", () => {
 });
 els.input.addEventListener("keydown", (e) => {
   if (e.isComposing) return;
+  detectLayout(e);
   if (e.key === "Escape") {
     els.input.blur();
     return;
@@ -681,7 +781,10 @@ els.input.addEventListener("keydown", (e) => {
 els.input.addEventListener("input", () => {
   const v = els.input.value;
   els.input.value = "";
-  for (const ch of v) typeChar(ch);
+  for (const ch of v) {
+    setLayout(layoutOfChar(ch, "input"));
+    typeChar(ch);
+  }
 });
 
 // ---------- settings dialog ----------
@@ -690,6 +793,7 @@ const opt = {
   ignoreCase: $<HTMLInputElement>("opt-case"),
   quotes: $<HTMLInputElement>("opt-quotes"),
   stop: $<HTMLInputElement>("opt-stop"),
+  trail: $<HTMLInputElement>("opt-trail"),
   caret: $<HTMLSelectElement>("opt-caret"),
   spaceNl: $<HTMLInputElement>("opt-space-nl"),
   size: $<HTMLInputElement>("opt-size"),
@@ -702,6 +806,7 @@ function syncSettingsForm() {
   opt.ignoreCase.checked = settings.ignoreCase;
   opt.quotes.checked = settings.simplifyQuotes;
   opt.stop.checked = settings.stopOnError;
+  opt.trail.checked = settings.keyTrail;
   opt.caret.value = settings.caret;
   opt.spaceNl.checked = settings.spaceForNewline;
   opt.size.value = String(settings.fontSize);
@@ -735,6 +840,11 @@ opt.spaceNl.addEventListener("change", () => {
 opt.caret.addEventListener("change", () => {
   settings.caret = opt.caret.value as Caret;
   applyVisualSettings();
+  saveSettings();
+});
+opt.trail.addEventListener("change", () => {
+  settings.keyTrail = opt.trail.checked;
+  els.trail.replaceChildren();
   saveSettings();
 });
 opt.stop.addEventListener("change", () => {

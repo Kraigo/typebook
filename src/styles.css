@@ -201,3 +201,44 @@ dialog select { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px
 .chip-acc.mid { --chip: #e8a317; }
 .chip-acc.low { --chip: var(--err); }
 .chip-progress { --chip: #8b6cdf; }
+
+/* keyboard layout chip */
+.chip-layout { --chip: var(--muted); }
+.chip-layout b { font-size: 14px; letter-spacing: .04em; }
+.chip-layout.wrong {
+  --chip: var(--err); color: var(--err);
+  background: var(--err-bg); border-color: color-mix(in srgb, var(--err) 45%, var(--border));
+  animation: chip-pulse 1s ease-in-out infinite;
+}
+.chip-layout.wrong b { color: var(--err); }
+@keyframes chip-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--err) 18%, transparent); } }
+
+/* trail of pressed keys under the text */
+/* Right-aligned to the middle: the newest key always lands on the same spot and
+   older ones fade out to the left, so adding/removing keys never shifts the row. */
+.key-trail {
+  height: 44px; margin-top: 12px; width: calc(50% + 16px);
+  display: flex; justify-content: flex-end; align-items: center; gap: 6px;
+  overflow: hidden; pointer-events: none;
+}
+.key {
+  position: relative; min-width: 32px; height: 32px; padding: 0 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: 600 16px ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--muted); background: var(--panel);
+  border: 1px solid var(--border); border-bottom-width: 3px; border-radius: 7px;
+  /* ~0.1 s pop-in, ~1.1 s fully visible, then a 1 s fade */
+  animation: key-pop 2200ms ease-out forwards;
+}
+.key.bad { color: #fff; background: var(--err); border-color: color-mix(in srgb, var(--err) 70%, #000); }
+@keyframes key-pop {
+  0% { opacity: 0; transform: scale(.8); }
+  5% { opacity: 1; transform: none; }
+  55% { opacity: 1; animation-timing-function: linear; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .key { animation-name: key-fade; }
+  .chip-layout.wrong { animation: none; }
+  @keyframes key-fade { 0%, 55% { opacity: 1; } 100% { opacity: 0; } }
+}
